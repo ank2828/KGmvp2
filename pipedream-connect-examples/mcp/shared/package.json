@@ -1,0 +1,24 @@
+{
+  "name": "@pipedream/shared",
+  "version": "1.0.0",
+  "description": "Shared utilities for MCP examples",
+  "type": "module",
+  "private": true,
+  "main": "config.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.3",
+    "@pipedream/sdk": "2.0.0-rc.8",
+    "commander": "^12.0.0",
+    "dotenv": "^16.3.1",
+    "openai": "^5.23.1",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0"
+  }
+}
