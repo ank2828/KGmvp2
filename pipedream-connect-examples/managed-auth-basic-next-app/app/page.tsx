@@ -25,7 +25,6 @@ export default function Home() {
   // Core Pipedream Connect state
   const [externalUserId, setExternalUserId] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null)
-  const [connectLink, setConnectLink] = useState<string | null>(null)
   const [expiresAt, setExpiresAt] = useState<Date | null>(null)
   const [pd, setPd] = useState<FrontendClient | null>(null);
 
@@ -34,7 +33,6 @@ export default function Home() {
   const [appSlug, setAppSlug] = useState<string>("");
   const [accountId, setAccountId] = useState<string | null>(null)
   const [accountName, setAccountName] = useState<string | null>(null)
-  const [isOAuthConfirmed, setIsOAuthConfirmed] = useState(true);
 
   // UI state
   const [error, setError] = useState<string>("");
@@ -132,8 +130,6 @@ export default function Home() {
 
     loadClient();
   }, [externalUserId, token, pd]);
-
-  const searchParams = useSearchParams()
 
   const ensureDate = (value: Date | string): Date =>
     value instanceof Date ? value : new Date(value);
@@ -556,7 +552,7 @@ export default function Home() {
     // Always reset messages and conversation history when switching apps
     setMessages([]);
     setConversationHistory([]);
-  }, [selectedApp, storedAccountId]);
+  }, [selectedApp, storedAccountId, accountId]);
 
   // Fetch emails
   const handleFetchEmails = async () => {
@@ -573,7 +569,7 @@ export default function Home() {
         role: 'assistant',
         content: `✅ Fetched and processed ${data.count} emails successfully! You can now ask questions about them.`
       }]);
-    } catch (error) {
+    } catch (_error) {
       setMessages([{
         role: 'assistant',
         content: '❌ Failed to fetch emails. Please try again.'
@@ -625,7 +621,7 @@ export default function Home() {
         // Keep only last 20 messages to prevent token overflow
         return updated.slice(-20);
       });
-    } catch (error) {
+    } catch (_error) {
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: '❌ Error querying knowledge graph. Please try again.'
@@ -663,8 +659,9 @@ export default function Home() {
       } else {
         setSyncStatus(`Error: ${data.message || 'Unknown error'}`);
       }
-    } catch (error: any) {
-      setSyncStatus(`❌ Sync failed: ${error.message}`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setSyncStatus(`❌ Sync failed: ${errorMessage}`);
       console.error('Sync error:', error);
     } finally {
       setSyncInProgress(false);
