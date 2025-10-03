@@ -24,6 +24,7 @@ export default function Home() {
   // Core Pipedream Connect state
   const [externalUserId, setExternalUserId] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null)
+  const [connectLink, setConnectLink] = useState<string | null>(null)
   const [expiresAt, setExpiresAt] = useState<Date | null>(null)
   const [pd, setPd] = useState<FrontendClient | null>(null);
 
