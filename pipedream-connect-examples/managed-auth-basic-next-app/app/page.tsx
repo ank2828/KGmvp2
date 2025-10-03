@@ -32,6 +32,7 @@ export default function Home() {
   const [appSlug, setAppSlug] = useState<string>("");
   const [accountId, setAccountId] = useState<string | null>(null)
   const [accountName, setAccountName] = useState<string | null>(null)
+  const [isOAuthConfirmed, setIsOAuthConfirmed] = useState(false);
 
   // UI state
   const [error, setError] = useState<string>("");
