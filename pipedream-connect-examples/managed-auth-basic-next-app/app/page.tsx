@@ -3,7 +3,6 @@
 
 import { ErrorBoundary } from "./ErrorBoundary";
 import { useEffect, useState, useRef, useCallback } from "react";
-import { useSearchParams } from "next/navigation";
 import { serverConnectTokenCreate, getAccountById } from "./server"
 import type { GetAppResponse, App, PipedreamClient as FrontendClient } from "@pipedream/sdk/browser";
 import { useAuth } from "@/contexts/AuthContext";
@@ -569,7 +568,7 @@ export default function Home() {
         role: 'assistant',
         content: `✅ Fetched and processed ${data.count} emails successfully! You can now ask questions about them.`
       }]);
-    } catch (_error) {
+    } catch {
       setMessages([{
         role: 'assistant',
         content: '❌ Failed to fetch emails. Please try again.'
@@ -621,7 +620,7 @@ export default function Home() {
         // Keep only last 20 messages to prevent token overflow
         return updated.slice(-20);
       });
-    } catch (_error) {
+    } catch {
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: '❌ Error querying knowledge graph. Please try again.'
