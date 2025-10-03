@@ -87,9 +87,8 @@ export default function Home() {
       const { createFrontendClient } = await import('@pipedream/sdk/browser');
       const client = createFrontendClient({
         frontendHost,
-        apiHost,
         externalUserId: externalUserId!,
-        token,
+        token: token!,
         tokenCallback: async () => {
           if (!externalUserId) {
             throw new Error("No external user ID provided");
@@ -101,6 +100,7 @@ export default function Home() {
             return {
               token: currentToken,
               expiresAt: currentExpiresAt,
+              connectLinkUrl: connectLink || '',
             };
           }
 
@@ -123,6 +123,7 @@ export default function Home() {
           return {
             token: response.token,
             expiresAt: nextExpiresAt,
+            connectLinkUrl: response.connectLinkUrl,
           };
         },
       });
@@ -189,7 +190,7 @@ export default function Home() {
         // Fetch account details to get the name
         try {
           const account = await getAccountById(id);
-          setAccountName(account.name);
+          setAccountName(account.name ?? null);
         } catch (error) {
           console.error('Error fetching account details:', error);
         }
@@ -236,7 +237,7 @@ export default function Home() {
         // Fetch account details to get the name
         try {
           const account = await getAccountById(data.account_id);
-          setAccountName(account.name);
+          setAccountName(account.name ?? null);
         } catch (error) {
           console.error('Error fetching account details:', error);
         }
@@ -311,7 +312,7 @@ export default function Home() {
             // Fetch account details to get the name
             try {
               const account = await getAccountById(data.account_id);
-              setAccountName(account.name);
+              setAccountName(account.name ?? null);
             } catch (error) {
               console.error('Error fetching account details:', error);
             }
