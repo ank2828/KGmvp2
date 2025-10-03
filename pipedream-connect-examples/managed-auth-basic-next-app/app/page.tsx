@@ -88,7 +88,7 @@ export default function Home() {
       const client = createFrontendClient({
         frontendHost,
         apiHost,
-        externalUserId,
+        externalUserId: externalUserId!,
         token,
         tokenCallback: async () => {
           if (!externalUserId) {
