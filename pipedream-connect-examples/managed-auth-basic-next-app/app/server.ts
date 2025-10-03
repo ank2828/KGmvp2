@@ -27,6 +27,14 @@ function getPipedreamClient() {
   if (!PIPEDREAM_PROJECT_ENVIRONMENT || !["development", "production"].includes(PIPEDREAM_PROJECT_ENVIRONMENT))
     throw new Error("PIPEDREAM_PROJECT_ENVIRONMENT not set in environment");
 
+  // Log credentials being used (mask secret for security)
+  console.log('🔧 Initializing PipedreamClient with:', {
+    projectId: NEXT_PUBLIC_PIPEDREAM_PROJECT_ID,
+    projectEnvironment: PIPEDREAM_PROJECT_ENVIRONMENT,
+    clientId: PIPEDREAM_CLIENT_ID,
+    clientSecretPrefix: PIPEDREAM_CLIENT_SECRET?.substring(0, 10) + '...',
+  });
+
   return new PipedreamClient({
     projectId: NEXT_PUBLIC_PIPEDREAM_PROJECT_ID,
     projectEnvironment: PIPEDREAM_PROJECT_ENVIRONMENT as "development" | "production",
