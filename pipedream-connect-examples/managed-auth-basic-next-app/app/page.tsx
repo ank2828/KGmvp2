@@ -9,6 +9,7 @@ import { useAuth } from "@/contexts/AuthContext";
 
 const frontendHost = process.env.NEXT_PUBLIC_PIPEDREAM_FRONTEND_HOST || "pipedream.com"
 const apiHost = process.env.NEXT_PUBLIC_PIPEDREAM_API_HOST || "api.pipedream.com"
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000"
 
 interface Message {
   role: 'user' | 'assistant';
@@ -171,7 +172,7 @@ export default function Home() {
 
         // Save connection to Supabase database
         try {
-          await fetch('http://localhost:8000/api/auth/save-connection', {
+          await fetch(`${BACKEND_URL}/api/auth/save-connection`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -226,7 +227,7 @@ export default function Home() {
   const checkExistingConnection = async (userId: string) => {
     try {
       const response = await fetch(
-        `http://localhost:8000/api/auth/check-connection?user_id=${userId}&app=gmail`
+        `${BACKEND_URL}/api/auth/check-connection?user_id=${userId}&app=gmail`
       );
       const data = await response.json();
 
@@ -300,7 +301,7 @@ export default function Home() {
       (async () => {
         try {
           const response = await fetch(
-            `http://localhost:8000/api/auth/check-connection?user_id=${externalUserId}&app=${appSlug}`
+            `${BACKEND_URL}/api/auth/check-connection?user_id=${externalUserId}&app=${appSlug}`
           );
           const data = await response.json();
 
@@ -563,7 +564,7 @@ export default function Home() {
     setFetchingEmails(true);
     try {
       const response = await fetch(
-        `http://localhost:8000/api/gmail/fetch?user_id=${externalUserId}&max_results=10`
+        `${BACKEND_URL}/api/gmail/fetch?user_id=${externalUserId}&max_results=10`
       );
       const data = await response.json();
 
@@ -591,7 +592,7 @@ export default function Home() {
     setLoading(true);
 
     try {
-      const response = await fetch('http://localhost:8000/api/agent/query', {
+      const response = await fetch(`${BACKEND_URL}/api/agent/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -645,7 +646,7 @@ export default function Home() {
 
     try {
       const response = await fetch(
-        `http://localhost:8000/api/gmail/sync-30-days?user_id=${externalUserId}&account_id=${accountId}&days=${syncDays}`,
+        `${BACKEND_URL}/api/gmail/sync-30-days?user_id=${externalUserId}&account_id=${accountId}&days=${syncDays}`,
         { method: 'POST' }
       );
 
