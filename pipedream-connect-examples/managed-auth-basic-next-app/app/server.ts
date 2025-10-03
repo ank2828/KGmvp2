@@ -9,38 +9,43 @@ import {
   type AccountsRetrieveRequest
 } from "@pipedream/sdk/server";
 
-const {
-  NEXT_PUBLIC_PIPEDREAM_PROJECT_ID,
-  PIPEDREAM_CLIENT_ID,
-  PIPEDREAM_CLIENT_SECRET,
-  PIPEDREAM_PROJECT_ENVIRONMENT,
-  PIPEDREAM_ALLOWED_ORIGINS
-} = process.env;
+// Helper function to get Pipedream client with latest environment variables
+function getPipedreamClient() {
+  const {
+    NEXT_PUBLIC_PIPEDREAM_PROJECT_ID,
+    PIPEDREAM_CLIENT_ID,
+    PIPEDREAM_CLIENT_SECRET,
+    PIPEDREAM_PROJECT_ENVIRONMENT,
+  } = process.env;
 
-if (!PIPEDREAM_CLIENT_ID)
-  throw new Error("PIPEDREAM_CLIENT_ID not set in environment");
-if (!PIPEDREAM_CLIENT_SECRET)
-  throw new Error("PIPEDREAM_CLIENT_SECRET not set in environment");
-if (!NEXT_PUBLIC_PIPEDREAM_PROJECT_ID)
-  throw new Error("PIPEDREAM_PROJECT_ID not set in environment");
-if (!PIPEDREAM_PROJECT_ENVIRONMENT || !["development", "production"].includes(PIPEDREAM_PROJECT_ENVIRONMENT))
-  throw new Error("PIPEDREAM_PROJECT_ENVIRONMENT not set in environment");
+  if (!PIPEDREAM_CLIENT_ID)
+    throw new Error("PIPEDREAM_CLIENT_ID not set in environment");
+  if (!PIPEDREAM_CLIENT_SECRET)
+    throw new Error("PIPEDREAM_CLIENT_SECRET not set in environment");
+  if (!NEXT_PUBLIC_PIPEDREAM_PROJECT_ID)
+    throw new Error("PIPEDREAM_PROJECT_ID not set in environment");
+  if (!PIPEDREAM_PROJECT_ENVIRONMENT || !["development", "production"].includes(PIPEDREAM_PROJECT_ENVIRONMENT))
+    throw new Error("PIPEDREAM_PROJECT_ENVIRONMENT not set in environment");
 
-const pd = new PipedreamClient({
-  projectId: NEXT_PUBLIC_PIPEDREAM_PROJECT_ID,
-  projectEnvironment: PIPEDREAM_PROJECT_ENVIRONMENT as "development" | "production",
-  clientId: PIPEDREAM_CLIENT_ID,
-  clientSecret: PIPEDREAM_CLIENT_SECRET,
-});
+  return new PipedreamClient({
+    projectId: NEXT_PUBLIC_PIPEDREAM_PROJECT_ID,
+    projectEnvironment: PIPEDREAM_PROJECT_ENVIRONMENT as "development" | "production",
+    clientId: PIPEDREAM_CLIENT_ID,
+    clientSecret: PIPEDREAM_CLIENT_SECRET,
+  });
+}
 
 export async function serverConnectTokenCreate(opts: CreateTokenOpts): Promise<CreateTokenResponse> {
   if (!opts.externalUserId) {
     throw new Error("externalUserId is required");
   }
 
+  const pd = getPipedreamClient();
+
   // Add allowed_origins from environment if provided
   let allowedOrigins: string[] | undefined;
-  
+  const { PIPEDREAM_ALLOWED_ORIGINS } = process.env;
+
   if (PIPEDREAM_ALLOWED_ORIGINS) {
     try {
       // Try to parse as JSON array first
@@ -50,7 +55,7 @@ export async function serverConnectTokenCreate(opts: CreateTokenOpts): Promise<C
       allowedOrigins = PIPEDREAM_ALLOWED_ORIGINS.split(',').map(origin => origin.trim());
     }
   }
-  
+
   const createOpts: CreateTokenOpts = {
     ...opts,
     externalUserId: opts.externalUserId,
@@ -60,7 +65,7 @@ export async function serverConnectTokenCreate(opts: CreateTokenOpts): Promise<C
     const existingOrigins = createOpts.allowedOrigins ?? [];
     createOpts.allowedOrigins = Array.from(new Set([...existingOrigins, ...allowedOrigins]));
   }
-  
+
   try {
     console.log('Creating connect token with options:', createOpts);
     return await pd.tokens.create(createOpts);
@@ -74,6 +79,8 @@ export async function getAppInfo(nameSlug: string): Promise<GetAppResponse> {
   if (!nameSlug) {
     throw new Error("Name slug is required");
   }
+
+  const pd = getPipedreamClient();
 
   try {
     // Use the SDK's getApp() method which handles auth and path construction
@@ -89,6 +96,8 @@ export async function getUserAccounts(
   externalId: string,
   includeCredentials: boolean = false,
 ) {
+  const pd = getPipedreamClient();
+
   const params: AccountsListRequest = {
     externalUserId: externalId,
     includeCredentials: !!includeCredentials,
@@ -102,6 +111,8 @@ export async function getUserAccounts(
 }
 
 export async function getAccountById(accountId: string) {
+  const pd = getPipedreamClient();
+
   try {
     const account = await pd.accounts.retrieve(accountId);
     // Return only safe fields, no credentials
@@ -119,6 +130,8 @@ export async function getAccountById(accountId: string) {
 // Removed searchApps - now handled client-side using connect token
 
 export async function fetchGmailMessages(externalUserId: string, accountId: string, maxResults: number = 10) {
+  const pd = getPipedreamClient();
+
   try {
     console.log('Fetching Gmail messages via Pipedream action:', { externalUserId, accountId, maxResults });
 
@@ -157,10 +170,12 @@ export async function makeAppRequest<T>(
     throw new Error("Name slug is required");
   }
 
+  const pd = getPipedreamClient();
+
   try {
     const retrieveOpts: AccountsRetrieveRequest = { includeCredentials: true };
     const account = await pd.accounts.retrieve(accountId, retrieveOpts);
-    
+
     if (!account.credentials) {
       throw new Error("No credentials found for account");
     }
