@@ -33,3 +33,5 @@ This example app is built with Next.js, a framework for quickly developing web a
 The easiest way to deploy this app is to use [Vercel](https://vercel.com/new). Check out the [Next.js deployment documentation](https://nextjs.org/docs/deployment) for more details.
 
 **Note:** When deploying to Vercel, set the Root Directory to `pipedream-connect-examples/managed-auth-basic-next-app`
+
+Build verified and tested locally before deployment.
