@@ -86,8 +86,10 @@ export default function Home() {
 
     async function loadClient() {
       const { createFrontendClient } = await import('@pipedream/sdk/browser');
+      console.log('🔧 Creating frontend client with:', { frontendHost, apiHost, externalUserId });
       const client = createFrontendClient({
         frontendHost,
+        apiHost,
         externalUserId: externalUserId!,
         token: token!,
         tokenCallback: async () => {
