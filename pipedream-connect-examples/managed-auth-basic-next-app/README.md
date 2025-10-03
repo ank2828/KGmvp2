@@ -35,3 +35,5 @@ The easiest way to deploy this app is to use [Vercel](https://vercel.com/new). C
 **Note:** When deploying to Vercel, set the Root Directory to `pipedream-connect-examples/managed-auth-basic-next-app`
 
 Build verified and tested locally before deployment.
+
+Backend deployed to Google Cloud Run with CORS configured for Vercel domains.
