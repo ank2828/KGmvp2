@@ -37,3 +37,5 @@ The easiest way to deploy this app is to use [Vercel](https://vercel.com/new). C
 Build verified and tested locally before deployment.
 
 Backend deployed to Google Cloud Run with CORS configured for Vercel domains.
+
+**Important:** In Vercel settings, disable "Include files outside the root directory in the Build Step".
