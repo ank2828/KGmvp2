@@ -5,39 +5,34 @@ Handles all Pipedream API interactions
 
 import os
 import base64
-import requests
+import logging
 from typing import Optional
+from pathlib import Path
 from dotenv import load_dotenv
+from pipedream import Pipedream
 
-# Load environment variables
-load_dotenv()
+# Load .env from project root
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(env_path)
+
+logger = logging.getLogger(__name__)
 
 class PipedreamService:
-    """Wrapper for Pipedream Connect Proxy operations"""
+    """Wrapper for Pipedream Connect SDK operations"""
 
     def __init__(self):
         self.project_id = os.getenv("PIPEDREAM_PROJECT_ID")
         self.project_environment = os.getenv("PIPEDREAM_PROJECT_ENVIRONMENT", "development")
         self.client_id = os.getenv("PIPEDREAM_CLIENT_ID")
         self.client_secret = os.getenv("PIPEDREAM_CLIENT_SECRET")
-        self._access_token = None
 
-    def _get_access_token(self):
-        """Get OAuth access token for Pipedream API using client credentials flow"""
-        if self._access_token:
-            return self._access_token
-
-        url = "https://api.pipedream.com/v1/oauth/token"
-
-        response = requests.post(url, data={
-            "grant_type": "client_credentials",
-            "client_id": self.client_id,
-            "client_secret": self.client_secret
-        })
-
-        response.raise_for_status()
-        self._access_token = response.json()["access_token"]
-        return self._access_token
+        # Initialize Pipedream Connect SDK - handles auth automatically
+        self.client = Pipedream(
+            client_id=self.client_id,
+            client_secret=self.client_secret,
+            project_id=self.project_id,
+            project_environment=self.project_environment
+        )
 
     def _fetch_message_details(self, external_user_id: str, account_id: str, message_id: str):
         """
@@ -52,27 +47,16 @@ class PipedreamService:
             dict: Parsed email with subject, from, date
         """
         try:
-            # Encode the target Gmail API URL for specific message
+            # Target Gmail API URL - SDK handles encoding and auth automatically
             target_url = f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}"
-            encoded_url = base64.urlsafe_b64encode(target_url.encode()).decode()
 
-            # Build proxy URL
-            url = f"https://api.pipedream.com/v1/connect/{self.project_id}/proxy/{encoded_url}"
-
-            headers = {
-                "Authorization": f"Bearer {self._get_access_token()}",
-                "x-pd-environment": self.project_environment
-            }
-
-            params = {
-                "external_user_id": external_user_id,
-                "account_id": account_id
-            }
-
-            response = requests.get(url, params=params, headers=headers)
-            response.raise_for_status()
-
-            message_data = response.json()
+            # Use SDK's proxy - handles auth and encoding automatically
+            # SDK returns dict directly, not Response object
+            message_data = self.client.proxy.get(
+                target_url,
+                external_user_id=external_user_id,
+                account_id=account_id
+            )
 
             # Parse headers to extract subject, from, date
             headers_list = message_data.get('payload', {}).get('headers', [])
@@ -142,24 +126,15 @@ class PipedreamService:
         """
         # Use format=full to get complete message with body
         target_url = f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}?format=full"
-        encoded_url = base64.urlsafe_b64encode(target_url.encode()).decode()
-
-        url = f"https://api.pipedream.com/v1/connect/{self.project_id}/proxy/{encoded_url}"
-
-        headers = {
-            "Authorization": f"Bearer {self._get_access_token()}",
-            "x-pd-environment": self.project_environment
-        }
-
-        params = {
-            "external_user_id": external_user_id,
-            "account_id": account_id
-        }
 
         try:
-            response = requests.get(url, params=params, headers=headers)
-            response.raise_for_status()
-            return self._extract_plain_text_body(response.json())
+            # SDK returns dict directly, not Response object
+            message_data = self.client.proxy.get(
+                target_url,
+                external_user_id=external_user_id,
+                account_id=account_id
+            )
+            return self._extract_plain_text_body(message_data)
         except Exception as e:
             print(f"Failed to fetch body for message {message_id}: {e}")
             return None
@@ -178,27 +153,15 @@ class PipedreamService:
         """
         try:
             # Step 1: Get list of message IDs
-            target_url = "https://gmail.googleapis.com/gmail/v1/users/me/messages"
-            encoded_url = base64.urlsafe_b64encode(target_url.encode()).decode()
-
-            url = f"https://api.pipedream.com/v1/connect/{self.project_id}/proxy/{encoded_url}"
-
-            headers = {
-                "Authorization": f"Bearer {self._get_access_token()}",
-                "x-pd-environment": self.project_environment
-            }
-
-            params = {
-                "external_user_id": external_user_id,
-                "account_id": account_id,
-                "maxResults": max_results
-            }
+            target_url = f"https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults={max_results}"
 
             print(f"Fetching message list from Gmail API...")
-            response = requests.get(url, params=params, headers=headers)
-            response.raise_for_status()
-
-            result = response.json()
+            # SDK returns dict directly, not Response object
+            result = self.client.proxy.get(
+                target_url,
+                external_user_id=external_user_id,
+                account_id=account_id
+            )
             messages = result.get('messages', [])
 
             print(f"Found {len(messages)} messages, fetching details for first {max_results}...")
@@ -248,26 +211,18 @@ class PipedreamService:
         if page_token:
             target_url += f"&pageToken={page_token}"
 
-        # Encode for Pipedream proxy
-        encoded_url = base64.urlsafe_b64encode(target_url.encode()).decode()
-
-        url = f"https://api.pipedream.com/v1/connect/{self.project_id}/proxy/{encoded_url}"
-
-        headers = {
-            "Authorization": f"Bearer {self._get_access_token()}",
-            "x-pd-environment": self.project_environment
-        }
-
-        params = {
-            "external_user_id": external_user_id,
-            "account_id": account_id
-        }
-
         try:
-            response = requests.get(url, params=params, headers=headers)
-            response.raise_for_status()
-            return response.json()
+            logger.info(f"🔍 Calling Pipedream proxy with external_user_id={external_user_id}, account_id={account_id}")
+            # SDK returns dict directly, not Response object
+            result = self.client.proxy.get(
+                target_url,
+                external_user_id=external_user_id,
+                account_id=account_id
+            )
+            logger.info(f"✅ Pipedream proxy call successful")
+            return result
         except Exception as e:
+            logger.error(f"❌ Pipedream proxy call failed: {e}")
             print(f"Error fetching paginated Gmail messages: {e}")
             raise
 
@@ -290,24 +245,14 @@ class PipedreamService:
         """
         # Use format=full to get complete message
         target_url = f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}?format=full"
-        encoded_url = base64.urlsafe_b64encode(target_url.encode()).decode()
-
-        url = f"https://api.pipedream.com/v1/connect/{self.project_id}/proxy/{encoded_url}"
-
-        headers = {
-            "Authorization": f"Bearer {self._get_access_token()}",
-            "x-pd-environment": self.project_environment
-        }
-
-        params = {
-            "external_user_id": external_user_id,
-            "account_id": account_id
-        }
 
         try:
-            response = requests.get(url, params=params, headers=headers)
-            response.raise_for_status()
-            return response.json()
+            # SDK returns dict directly, not Response object
+            return self.client.proxy.get(
+                target_url,
+                external_user_id=external_user_id,
+                account_id=account_id
+            )
         except Exception as e:
             print(f"Error fetching full message {message_id}: {e}")
             raise

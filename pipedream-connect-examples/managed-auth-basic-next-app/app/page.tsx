@@ -171,8 +171,26 @@ export default function Home() {
       app: appSlug,
       token,
       onSuccess: async ({ id }: ConnectResult) => {
-        console.log('🎉 Connection successful!', { accountId: id });
+        console.log('🔍 BEFORE connection - external_user_id:', externalUserId);
+        console.log('🎉 Connection successful! Full result:', JSON.stringify({ id }, null, 2));
+        console.log('🔍 Account ID returned:', id);
         setAccountId(id);
+
+        // Verify account exists in Pipedream immediately
+        try {
+          if (pd) {
+            console.log('🔍 Verifying account exists in Pipedream...');
+            const accounts = await pd.accounts();
+            console.log('🔍 All accounts in Pipedream:', JSON.stringify(accounts, null, 2));
+            const accountExists = accounts.some((a: any) => a.id === id);
+            console.log('🔍 New account exists in Pipedream?', accountExists);
+            if (!accountExists) {
+              console.error('❌ CRITICAL: Account created but not found in Pipedream!');
+            }
+          }
+        } catch (verifyError) {
+          console.error('❌ Error verifying account in Pipedream:', verifyError);
+        }
 
         // Save connection to Supabase database
         try {
