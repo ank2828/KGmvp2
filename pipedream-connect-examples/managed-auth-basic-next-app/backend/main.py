@@ -14,6 +14,7 @@ from dependencies import set_graphiti_service
 from routes.gmail import router as gmail_router
 from routes.auth import router as auth_router
 from routes.agent import router as agent_router
+from routes.webhooks import router as webhooks_router
 
 # Configure logging
 logging.basicConfig(
@@ -76,6 +77,7 @@ app.add_middleware(
 app.include_router(gmail_router, prefix="/api", tags=["Gmail"])
 app.include_router(auth_router, prefix="/api", tags=["Auth"])
 app.include_router(agent_router, prefix="/api", tags=["Agent"])
+app.include_router(webhooks_router, prefix="/api", tags=["Webhooks"])
 
 
 @app.get("/", tags=["Health"])

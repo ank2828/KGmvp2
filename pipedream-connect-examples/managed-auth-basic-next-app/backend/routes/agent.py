@@ -10,6 +10,7 @@ from openai import OpenAI
 from services.graphiti_service import GraphitiService
 from dependencies import get_graphiti_service
 from config import settings
+from routes.gmail import sanitize_user_id_for_graphiti
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -47,10 +48,18 @@ async def query_agent(
     """
     try:
         # 1. Search knowledge graph
-        # VERIFIED: Matches routes/gmail.py:161
-        # Sanitize user_id to avoid RediSearch syntax errors with hyphens
-        sanitized_user_id = request.user_id.replace('-', '')
+        # CRITICAL: Use SAME sanitization as gmail.py sync function
+        # Must use SHA256 hash to match the group_id used during email sync
+        sanitized_user_id = sanitize_user_id_for_graphiti(request.user_id)
+
+        logger.info(f"🔍 AI Agent searching:")
+        logger.info(f"   Original user_id: {request.user_id}")
+        logger.info(f"   Sanitized group_id: {sanitized_user_id}")
+        logger.info(f"   Query: {request.query}")
+
         results = await graphiti.search(request.query, 10, sanitized_user_id)
+
+        logger.info(f"📊 Search results: {len(results)} facts found")
 
         # 2. Format context from search results
         # VERIFIED: Result structure from graphiti_service.py:151-159
@@ -115,8 +124,8 @@ async def test_search(
 ):
     """Test endpoint to see raw graph search results"""
     try:
-        # Sanitize user_id to avoid RediSearch syntax errors with hyphens
-        sanitized_user_id = user_id.replace('-', '')
+        # CRITICAL: Use SAME sanitization as gmail.py sync function
+        sanitized_user_id = sanitize_user_id_for_graphiti(user_id)
         results = await graphiti.search(query, limit, sanitized_user_id)
 
         return {
