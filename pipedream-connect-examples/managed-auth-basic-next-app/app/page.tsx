@@ -64,6 +64,9 @@ export default function Home() {
   const [syncInProgress, setSyncInProgress] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string>('');
   const [syncDays, setSyncDays] = useState(7);
+  const [syncJobId, setSyncJobId] = useState<string | null>(null);
+  const [syncProgress, setSyncProgress] = useState<{phase?: string, progress?: number} | null>(null);
+  const syncPollingRef = useRef<NodeJS.Timeout | null>(null);
 
   // Refs
   const tokenCreationInProgress = useRef<boolean>(false);
@@ -635,6 +638,47 @@ export default function Home() {
     }
   };
 
+  // Poll sync status
+  const pollSyncStatus = useCallback(async (jobId: string) => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/sync/status/${jobId}`);
+      if (!response.ok) {
+        throw new Error('Failed to get sync status');
+      }
+
+      const data = await response.json();
+
+      // Update progress info
+      setSyncProgress(data.progress || null);
+
+      // Update status message
+      const phase = data.progress?.phase || data.status;
+      const processed = data.emails_processed || 0;
+      setSyncStatus(`${phase} - ${processed} emails processed...`);
+
+      // Check if complete or failed
+      if (data.status === 'completed') {
+        setSyncStatus(`✅ Sync complete! Processed ${processed} emails from last ${syncDays} days`);
+        setSyncInProgress(false);
+        setSyncJobId(null);
+        if (syncPollingRef.current) {
+          clearInterval(syncPollingRef.current);
+          syncPollingRef.current = null;
+        }
+      } else if (data.status === 'failed') {
+        setSyncStatus(`❌ Sync failed: ${data.error_message || 'Unknown error'}`);
+        setSyncInProgress(false);
+        setSyncJobId(null);
+        if (syncPollingRef.current) {
+          clearInterval(syncPollingRef.current);
+          syncPollingRef.current = null;
+        }
+      }
+    } catch (error) {
+      console.error('Error polling sync status:', error);
+    }
+  }, [syncDays]);
+
   // Handle sync
   const handleSync = async () => {
     if (!externalUserId || !accountId) {
@@ -643,7 +687,8 @@ export default function Home() {
     }
 
     setSyncInProgress(true);
-    setSyncStatus(`Starting ${syncDays}-day sync...`);
+    setSyncStatus(`Queuing ${syncDays}-day sync...`);
+    setSyncProgress(null);
 
     try {
       const response = await fetch(
@@ -658,19 +703,43 @@ export default function Home() {
 
       const data = await response.json();
 
-      if (data.status === 'success') {
+      // New Celery-based response
+      if (data.status === 'queued' && data.job_id) {
+        setSyncJobId(data.job_id);
+        setSyncStatus(`Sync queued! Processing in background...`);
+
+        // Start polling for status updates every 3 seconds
+        syncPollingRef.current = setInterval(() => {
+          pollSyncStatus(data.job_id);
+        }, 3000);
+
+        // Poll immediately
+        pollSyncStatus(data.job_id);
+      }
+      // Legacy direct sync response (fallback)
+      else if (data.status === 'success') {
         setSyncStatus(`✅ Synced ${data.total_processed} emails from last ${syncDays} days`);
+        setSyncInProgress(false);
       } else {
         setSyncStatus(`Error: ${data.message || 'Unknown error'}`);
+        setSyncInProgress(false);
       }
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       setSyncStatus(`❌ Sync failed: ${errorMessage}`);
       console.error('Sync error:', error);
-    } finally {
       setSyncInProgress(false);
     }
   };
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (syncPollingRef.current) {
+        clearInterval(syncPollingRef.current);
+      }
+    };
+  }, []);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -954,9 +1023,17 @@ export default function Home() {
                     <p className="text-sm text-gray-700">{syncStatus}</p>
                   )}
 
-                  <p className="text-xs text-gray-500">
-                    ⚠️ Keep window open during sync. Closes if you navigate away.
-                  </p>
+                  {syncInProgress && (
+                    <p className="text-xs text-green-600">
+                      ✅ Background sync running! You can close this window - sync will continue on the server.
+                    </p>
+                  )}
+
+                  {!syncInProgress && (
+                    <p className="text-xs text-gray-500">
+                      💡 Syncs run in the background. No need to keep window open!
+                    </p>
+                  )}
                 </div>
               )}
             </>

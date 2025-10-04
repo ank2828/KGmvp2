@@ -417,15 +417,18 @@ async def clear_database(
         )
 
 
-@router.post("/gmail/sync-30-days")
-async def start_30_day_sync(
+@router.post("/gmail/sync-30-days-direct")
+async def start_30_day_sync_direct(
     user_id: str = Query(...),
     account_id: str = Query(...),
     days: int = Query(30, ge=1, le=90, description="Number of days to sync (1-90)"),
     graphiti: GraphitiService = Depends(get_graphiti_service),
 ):
     """
-    Start Gmail sync with Supabase state tracking.
+    [LEGACY] Direct synchronous Gmail sync with Supabase state tracking.
+
+    DEPRECATED: Use /gmail/sync-30-days instead (background processing).
+    This endpoint blocks until sync completes - kept for backward compatibility.
 
     Args:
         user_id: Supabase user ID
@@ -500,6 +503,94 @@ async def start_30_day_sync(
         }).eq('user_id', user_id).execute()
 
         raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+
+
+@router.post("/gmail/sync-30-days")
+async def start_30_day_sync(
+    user_id: str = Query(...),
+    account_id: str = Query(...),
+    days: int = Query(30, ge=1, le=90, description="Number of days to sync (1-90)"),
+):
+    """
+    Queue Gmail sync as background Celery task.
+
+    Args:
+        user_id: Supabase user ID
+        account_id: Pipedream account ID
+        days: Number of days to sync (default 30, max 90)
+
+    Returns immediately with job_id for progress tracking.
+    User can close browser - sync continues in background.
+    """
+    # Check if sync already in progress for this user
+    try:
+        active_jobs = db_service.client.table('sync_jobs')\
+            .select('id')\
+            .eq('user_id', user_id)\
+            .in_('status', ['queued', 'processing'])\
+            .execute()
+
+        if active_jobs.data:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Sync already in progress (job_id: {active_jobs.data[0]['id']})"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error checking active syncs: {e}")
+
+    # Create job record
+    try:
+        job_result = db_service.client.table('sync_jobs').insert({
+            'user_id': user_id,
+            'account_id': account_id,
+            'status': 'queued',
+            'days': days
+        }).execute()
+
+        job_id = job_result.data[0]['id']
+        logger.info(f"Created sync job {job_id} for user {user_id[:8]}")
+
+    except Exception as e:
+        logger.error(f"Error creating sync job: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create sync job")
+
+    # Queue Celery task
+    try:
+        from tasks.sync_tasks import sync_emails_background
+
+        task = sync_emails_background.delay(
+            user_id=user_id,
+            account_id=account_id,
+            days=days,
+            job_id=job_id
+        )
+
+        # Update job with task_id
+        db_service.client.table('sync_jobs').update({
+            'task_id': task.id
+        }).eq('id', job_id).execute()
+
+        logger.info(f"Queued Celery task {task.id} for job {job_id}")
+
+        return {
+            "status": "queued",
+            "job_id": job_id,
+            "task_id": task.id,
+            "message": f"Sync queued for {days} days. Check /api/sync/status/{job_id} for progress."
+        }
+
+    except Exception as e:
+        logger.error(f"Error queuing Celery task: {e}")
+
+        # Mark job as failed
+        db_service.client.table('sync_jobs').update({
+            'status': 'failed',
+            'error_message': f"Failed to queue task: {str(e)}"
+        }).eq('id', job_id).execute()
+
+        raise HTTPException(status_code=500, detail=f"Failed to queue sync: {str(e)}")
 
 
 @router.get("/gmail/sync-status")

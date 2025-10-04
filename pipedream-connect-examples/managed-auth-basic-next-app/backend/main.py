@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from redis import Redis
 
 from config import settings
 from services.graphiti_service import GraphitiService
@@ -15,6 +16,7 @@ from routes.gmail import router as gmail_router
 from routes.auth import router as auth_router
 from routes.agent import router as agent_router
 from routes.webhooks import router as webhooks_router
+from routes.sync_status import router as sync_status_router
 
 # Configure logging
 logging.basicConfig(
@@ -78,6 +80,7 @@ app.include_router(gmail_router, prefix="/api", tags=["Gmail"])
 app.include_router(auth_router, prefix="/api", tags=["Auth"])
 app.include_router(agent_router, prefix="/api", tags=["Agent"])
 app.include_router(webhooks_router, prefix="/api", tags=["Webhooks"])
+app.include_router(sync_status_router, prefix="/api", tags=["Sync"])
 
 
 @app.get("/", tags=["Health"])
@@ -98,3 +101,22 @@ def health_check():
         "falkordb_configured": bool(settings.falkordb_host),
         "openai_configured": bool(settings.openai_api_key),
     }
+
+
+@app.get("/health/redis", tags=["Health"])
+async def redis_health():
+    """Redis connection health check"""
+    try:
+        r = Redis.from_url(settings.redis_broker_url)
+        r.ping()
+        return {
+            "status": "healthy",
+            "redis": "connected",
+            "broker_url": settings.redis_broker_url.split('@')[-1]  # Hide password if present
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "redis": f"connection_failed: {str(e)}",
+            "broker_url": settings.redis_broker_url.split('@')[-1]
+        }
