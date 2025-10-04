@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     # Webhook Security
     pipedream_webhook_secret: Optional[str] = Field(None, env="PIPEDREAM_WEBHOOK_SECRET")
 
+    # Redis (Celery broker and result backend)
+    redis_broker_url: str = Field(default="redis://localhost:6379/0", env="REDIS_BROKER_URL")
+    redis_result_backend: str = Field(default="redis://localhost:6379/1", env="REDIS_RESULT_BACKEND")
+
     # Application settings
     max_emails_per_batch: int = Field(10, env="MAX_EMAILS_PER_BATCH")
     max_email_body_length: int = Field(5000, env="MAX_EMAIL_BODY_LENGTH")
