@@ -12,6 +12,7 @@ from graphiti_core.nodes import EpisodeType
 
 from config import settings
 from models.email import EmailMessage, GraphProcessingResult
+from services.database import db_service
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,78 @@ class GraphitiService:
 
         logger.info(f"Graphiti service created")
 
+    async def has_episode_been_processed(
+        self,
+        source: str,
+        source_id: str,
+        user_id: str
+    ) -> bool:
+        """
+        Check if an episode has already been processed (deduplication).
+
+        Uses Supabase tracking table for multi-source deduplication.
+        Works for Gmail, Slack, HubSpot, Google Docs, etc.
+
+        Args:
+            source: Data source identifier (e.g., 'gmail', 'slack', 'hubspot')
+            source_id: Unique ID from source system (e.g., Gmail message_id)
+            user_id: User's ID for multi-tenant isolation
+
+        Returns:
+            True if episode already exists, False otherwise
+        """
+        try:
+            result = db_service.client.table('processed_episodes')\
+                .select('id')\
+                .match({
+                    'user_id': user_id,
+                    'source': source,
+                    'source_id': source_id
+                })\
+                .execute()
+
+            exists = len(result.data) > 0
+
+            if exists:
+                logger.info(f"✅ Episode already processed: {source}:{source_id}")
+
+            return exists
+
+        except Exception as e:
+            logger.warning(f"Error checking episode deduplication: {e}")
+            # If check fails, assume episode doesn't exist to avoid blocking
+            return False
+
+    async def mark_episode_as_processed(
+        self,
+        source: str,
+        source_id: str,
+        user_id: str,
+        episode_uuid: str
+    ):
+        """
+        Mark an episode as processed in Supabase tracking table.
+
+        Args:
+            source: Data source identifier (e.g., 'gmail', 'slack', 'hubspot')
+            source_id: Unique ID from source system
+            user_id: User's ID
+            episode_uuid: UUID of the Episodic node created in FalkorDB
+        """
+        try:
+            db_service.client.table('processed_episodes').insert({
+                'user_id': user_id,
+                'source': source,
+                'source_id': source_id,
+                'episode_uuid': episode_uuid
+            }).execute()
+
+            logger.info(f"✅ Marked as processed: {source}:{source_id} → {episode_uuid}")
+
+        except Exception as e:
+            # Log but don't fail - episode was already processed successfully
+            logger.error(f"Failed to mark episode as processed: {e}")
+
     async def initialize(self):
         """Build indices (call once on startup)"""
         if self._initialized:
@@ -65,14 +138,16 @@ class GraphitiService:
     async def process_email(
         self,
         email: EmailMessage,
-        user_id: str = "default_user"
+        user_id: str = "default_user",
+        source: str = "gmail"
     ) -> GraphProcessingResult:
         """
-        Process a single email through Graphiti.
+        Process a single email through Graphiti with deduplication.
 
         Args:
             email: EmailMessage model
             user_id: User identifier for graph partitioning
+            source: Data source identifier (default: 'gmail')
 
         Returns:
             GraphProcessingResult with extracted entities/relationships
@@ -80,6 +155,18 @@ class GraphitiService:
         start_time = time.time()
 
         try:
+            # Check if episode already processed (deduplication)
+            if await self.has_episode_been_processed(source, email.message_id, user_id):
+                logger.info(f"⏭️  Skipping duplicate episode: {email.subject[:50]}...")
+                return GraphProcessingResult(
+                    episode_uuid="",
+                    entities_extracted=0,
+                    relationships_extracted=0,
+                    entity_names=[],
+                    relationships=[],
+                    processing_time_ms=0
+                )
+
             # Build episode content
             episode_content = self._build_episode_content(email)
 
@@ -93,6 +180,14 @@ class GraphitiService:
                 source_description="Gmail message",
                 reference_time=datetime.now(timezone.utc),
                 group_id=user_id,
+            )
+
+            # Mark as processed in deduplication table
+            await self.mark_episode_as_processed(
+                source=source,
+                source_id=email.message_id,
+                user_id=user_id,
+                episode_uuid=result.episode.uuid
             )
 
             # Extract results

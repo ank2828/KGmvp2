@@ -17,6 +17,8 @@ from routes.auth import router as auth_router
 from routes.agent import router as agent_router
 from routes.webhooks import router as webhooks_router
 from routes.sync_status import router as sync_status_router
+from routes.explore import router as explore_router
+from routes.process_emails import router as process_emails_router
 
 # Configure logging
 logging.basicConfig(
@@ -66,11 +68,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS - Allow Vercel domains and localhost for development
+# CORS - Allow all origins for development (restrict in production)
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"(https://.*\.vercel\.app|http://localhost:300[0-9])",
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -81,6 +83,8 @@ app.include_router(auth_router, prefix="/api", tags=["Auth"])
 app.include_router(agent_router, prefix="/api", tags=["Agent"])
 app.include_router(webhooks_router, prefix="/api", tags=["Webhooks"])
 app.include_router(sync_status_router, prefix="/api", tags=["Sync"])
+app.include_router(explore_router, tags=["Explore"])
+app.include_router(process_emails_router, prefix="/api", tags=["Email Processing"])
 
 
 @app.get("/", tags=["Health"])

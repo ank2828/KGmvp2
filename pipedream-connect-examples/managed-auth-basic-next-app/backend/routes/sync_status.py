@@ -43,20 +43,20 @@ async def get_sync_status(job_id: str):
 
         job = result.data[0]
 
-        # If we have a Celery task_id, get real-time status
+        # If we have a Celery celery_task_id, get real-time status
         celery_state = None
         celery_meta = None
-        if job.get('task_id'):
+        if job.get('celery_task_id'):
             try:
-                task = AsyncResult(job['task_id'], app=celery_app)
+                task = AsyncResult(job['celery_task_id'], app=celery_app)
                 celery_state = task.state
                 celery_meta = task.info if isinstance(task.info, dict) else {}
             except Exception as e:
-                logger.warning(f"Could not get Celery status for task {job['task_id']}: {e}")
+                logger.warning(f"Could not get Celery status for task {job['celery_task_id']}: {e}")
 
         return {
             "job_id": job['id'],
-            "task_id": job.get('task_id'),
+            "celery_task_id": job.get('celery_task_id'),
             "status": job['status'],
             "celery_state": celery_state,  # PENDING, PROGRESS, SUCCESS, FAILURE
             "progress": job.get('progress') or celery_meta,
@@ -161,10 +161,10 @@ async def cancel_sync_job(job_id: str):
             )
 
         # Revoke Celery task if it exists
-        if job.get('task_id'):
+        if job.get('celery_task_id'):
             try:
-                celery_app.control.revoke(job['task_id'], terminate=True)
-                logger.info(f"Revoked Celery task {job['task_id']}")
+                celery_app.control.revoke(job['celery_task_id'], terminate=True)
+                logger.info(f"Revoked Celery task {job['celery_task_id']}")
             except Exception as e:
                 logger.warning(f"Could not revoke Celery task: {e}")
 

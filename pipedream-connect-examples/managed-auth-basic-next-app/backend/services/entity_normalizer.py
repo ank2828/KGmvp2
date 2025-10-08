@@ -276,12 +276,24 @@ class EntityNormalizer:
         """
         Normalize Deal entity.
 
-        Canonical identifier: deal ID (source + slugified name)
+        Canonical identifier: slugified name (for deterministic deduplication within group)
         AI search field: name (for full-text fuzzy matching)
         Link to Graphiti: graphiti_uuid (preserves relationships)
         """
-        # Generate deal ID from source + name
-        deal_id = f"{self.source}:{self._slugify(node.name)}"
+        # Priority: Use CRM ID when available, fallback to slugified name, then UUID
+        if hasattr(node, 'attributes') and node.attributes:
+            if 'hubspot_deal_id' in node.attributes:
+                deal_id = node.attributes['hubspot_deal_id']
+            elif 'deal_id' in node.attributes:
+                deal_id = node.attributes['deal_id']
+            else:
+                deal_id = self._slugify(node.name)  # Deterministic deduplication key
+                if not deal_id:  # Fallback if slugify returns empty string
+                    deal_id = node.uuid
+        else:
+            deal_id = self._slugify(node.name)
+            if not deal_id:  # Fallback if slugify returns empty string
+                deal_id = node.uuid
 
         deal_data = {
             "name": node.name,
@@ -304,12 +316,11 @@ class EntityNormalizer:
                 deal_data['products'] = node.attributes['products']
 
         query = """
-        // Create canonical Deal
-        MERGE (d:Deal {id: $id})
+        // Create canonical Deal (deduplication within group_id scope)
+        MERGE (d:Deal {id: $id, group_id: $group_id})
         ON CREATE SET
             d.name = $name,
             d.canonical_id = $canonical_id,
-            d.group_id = $group_id,
             d.created_at = $created_at,
             d.last_updated = $last_updated,
             d.amount = $amount,

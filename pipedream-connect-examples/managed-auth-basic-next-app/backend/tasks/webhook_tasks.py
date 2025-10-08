@@ -12,6 +12,8 @@ from typing import Optional
 from tasks.celery_config import app
 from services.graphiti_service import GraphitiService
 from services.pipedream import pipedream_service
+from services.entity_normalizer import EntityNormalizer
+from services.entity_types import ENTITY_TYPES, EXCLUDED_ENTITY_TYPES
 from routes.gmail import sanitize_user_id_for_graphiti, sanitize_for_falkordb
 
 logger = logging.getLogger(__name__)
@@ -131,7 +133,7 @@ async def _process_webhook_email_async(
 Subject: {sanitize_for_falkordb(subject or 'No Subject')}
 Date: {date_str or 'Unknown'}
 
-{sanitize_for_falkordb(body[:5000] if body else '')}"""
+{sanitize_for_falkordb(body[:1000] if body else '')}"""
 
         # Get timestamp
         internal_date = event_data.get('internalDate', int(datetime.now(timezone.utc).timestamp() * 1000))
@@ -140,14 +142,24 @@ Date: {date_str or 'Unknown'}
         # Add to Graphiti
         from graphiti_core.nodes import EpisodeType
 
-        await graphiti.graphiti.add_episode(
+        result = await graphiti.graphiti.add_episode(
             name=f"Gmail Webhook {reference_time.date()} - {subject or 'No Subject'}",
             episode_body=email_text,
             source_description=f"Real-time email from {sender}",
             reference_time=reference_time,
             group_id=sanitized_user_id,
-            source=EpisodeType.text
+            source=EpisodeType.text,
+            entity_types=ENTITY_TYPES,
+            excluded_entity_types=EXCLUDED_ENTITY_TYPES
         )
+
+        # Normalize entities immediately after extraction
+        normalizer = EntityNormalizer(driver=graphiti.driver, source='webhook')
+        normalized_counts = await normalizer.normalize_and_persist(
+            graphiti_result=result,
+            group_id=sanitized_user_id
+        )
+        logger.info(f"  Normalized: {normalized_counts}")
 
         logger.info(f"✓ Added webhook email to knowledge graph: {subject}")
 

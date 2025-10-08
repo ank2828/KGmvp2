@@ -21,6 +21,8 @@ from tasks.celery_config import app
 from services.graphiti_service import GraphitiService
 from services.pipedream import pipedream_service
 from services.database import db_service
+from services.entity_normalizer import EntityNormalizer
+from services.entity_types import ENTITY_TYPES, EXCLUDED_ENTITY_TYPES
 from routes.gmail import (
     sanitize_user_id_for_graphiti,
     group_emails_by_date,
@@ -128,7 +130,7 @@ def sync_emails_background(
             db_service.client.table('sync_jobs').update({
                 'status': 'processing',
                 'started_at': start_time.isoformat(),
-                'task_id': task_id
+                'celery_task_id': task_id
             }).eq('id', job_id).execute()
 
         # Execute sync (handles its own async event loop)
@@ -250,7 +252,7 @@ async def _sync_gmail_async(
         page_token = None
         page_count = 0
 
-        logger.info(f"📥 Fetching message IDs (after {after_date.date()})...")
+        logger.info(f"📥 Fetching message IDs (after {after_date.date()}) using Pipedream Actions API...")
 
         while True:
             try:
@@ -353,7 +355,54 @@ async def _sync_gmail_async(
             for batch_idx in range(0, len(day_emails), MAX_EMAILS_PER_EPISODE):
                 batch = day_emails[batch_idx:batch_idx + MAX_EMAILS_PER_EPISODE]
 
-                # Combine emails
+                # PHASE 1: Store individual emails in Supabase FIRST
+                from services.document_store import document_store
+
+                document_ids_map = {}
+                emails_for_storage = []
+
+                for email_data in batch:
+                    headers_list = email_data.get('payload', {}).get('headers', [])
+                    subject = sender = date_str = None
+
+                    for header in headers_list:
+                        name = header.get('name', '').lower()
+                        value = header.get('value', '')
+                        if name == 'subject':
+                            subject = value
+                        elif name == 'from':
+                            sender = value
+                        elif name == 'date':
+                            date_str = value
+
+                    body = gmail._extract_plain_text_body(email_data)
+
+                    # Prepare for Supabase storage
+                    emails_for_storage.append({
+                        'id': email_data['id'],
+                        'subject': subject or 'No Subject',
+                        'body': body or '',
+                        'from': sender or 'Unknown',
+                        'to': '',
+                        'date': date_str,
+                        'thread_id': email_data.get('threadId', '')
+                    })
+
+                # Store emails in batch (with embeddings)
+                try:
+                    stored_doc_ids = await document_store.store_emails_batch(
+                        user_id=sanitized_user_id,
+                        emails=emails_for_storage
+                    )
+
+                    for email, doc_id in zip(emails_for_storage, stored_doc_ids):
+                        document_ids_map[email['id']] = doc_id
+
+                    logger.info(f"  Stored {len(stored_doc_ids)} emails in Supabase")
+                except Exception as e:
+                    logger.error(f"Failed to store emails in Supabase: {e}")
+
+                # PHASE 2: Combine emails for Graphiti episode
                 combined_parts = []
                 for email_data in batch:
                     headers_list = email_data.get('payload', {}).get('headers', [])
@@ -369,13 +418,13 @@ async def _sync_gmail_async(
                         elif name == 'date':
                             date_str = value
 
-                    body = pipedream_service._extract_plain_text_body(email_data)
+                    body = gmail._extract_plain_text_body(email_data)
 
                     email_text = f"""From: {sanitize_for_falkordb(sender or 'Unknown')}
 Subject: {sanitize_for_falkordb(subject or 'No Subject')}
 Date: {date_str or 'Unknown'}
 
-{sanitize_for_falkordb(body[:5000] if body else '')}"""
+{sanitize_for_falkordb(body[:1000] if body else '')}"""
 
                     combined_parts.append(email_text)
 
@@ -388,18 +437,49 @@ Date: {date_str or 'Unknown'}
                     tz=timezone.utc
                 )
 
-                # Add to Graphiti
+                # PHASE 3: Add to Graphiti
                 try:
                     from graphiti_core.nodes import EpisodeType
 
-                    await graphiti.graphiti.add_episode(
+                    result = await graphiti.graphiti.add_episode(
                         name=f"Gmail {date.isoformat()} (batch {batch_idx//MAX_EMAILS_PER_EPISODE + 1})",
                         episode_body=combined_body,
                         source_description=f"{len(batch)} emails from {date}",
                         reference_time=reference_time,
                         group_id=sanitized_user_id,
-                        source=EpisodeType.text
+                        source=EpisodeType.text,
+                        entity_types=ENTITY_TYPES,
+                        excluded_entity_types=EXCLUDED_ENTITY_TYPES
                     )
+
+                    # Normalize entities immediately after extraction
+                    normalizer = EntityNormalizer(driver=graphiti.driver, source='gmail')
+                    normalized_counts = await normalizer.normalize_and_persist(
+                        graphiti_result=result,
+                        group_id=sanitized_user_id
+                    )
+                    logger.info(f"  Normalized: {normalized_counts}")
+
+                    # PHASE 4: Link documents to extracted entities
+                    for entity_node in result.nodes:
+                        entity_uuid = entity_node.uuid
+                        entity_type = entity_node.labels[0] if entity_node.labels else 'Entity'
+                        entity_name = entity_node.name
+
+                        for email_id, doc_id in document_ids_map.items():
+                            try:
+                                await document_store.link_document_to_entity(
+                                    document_id=doc_id,
+                                    entity_uuid=entity_uuid,
+                                    entity_type=entity_type,
+                                    entity_name=entity_name,
+                                    mention_count=1,
+                                    relevance_score=0.8
+                                )
+                            except Exception as link_error:
+                                logger.debug(f"Failed to link document to entity: {link_error}")
+
+                    logger.info(f"  Linked {len(document_ids_map)} documents to {len(result.nodes)} entities")
 
                     total_processed += len(batch)
                     logger.info(f"✓ Batch {batch_idx//MAX_EMAILS_PER_EPISODE + 1}: {len(batch)} emails")

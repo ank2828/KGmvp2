@@ -581,23 +581,137 @@ export default function Home() {
 
   // Fetch emails
   const handleFetchEmails = async () => {
-    if (!externalUserId) return;
+    if (!externalUserId || !accountId || !pd) {
+      setMessages([{
+        role: 'assistant',
+        content: '❌ Please connect Gmail first.'
+      }]);
+      return;
+    }
 
     setFetchingEmails(true);
-    try {
-      const response = await fetch(
-        `${BACKEND_URL}/api/gmail/fetch?user_id=${externalUserId}&max_results=10`
-      );
-      const data = await response.json();
+    setSyncStatus('Fetching emails from Gmail...');
 
+    try {
+      // STEP 1: Fetch emails using Pipedream browser SDK (which WORKS!)
+      console.log('📧 Fetching message IDs from Gmail...');
+
+      const listResult = await pd.actions.run({
+        id: 'gmail-find-email',
+        externalUserId: externalUserId,
+        configuredProps: {
+          gmail: {
+            authProvisionId: accountId
+          },
+          maxResults: 10
+        }
+      });
+
+      const messages = listResult.messages || [];
+      console.log(`✅ Found ${messages.length} messages`);
+
+      if (messages.length === 0) {
+        setSyncStatus('No emails found');
+        setMessages([{
+          role: 'assistant',
+          content: '📭 No emails found in your inbox.'
+        }]);
+        setFetchingEmails(false);
+        return;
+      }
+
+      setSyncStatus(`Fetching content for ${messages.length} emails...`);
+
+      // STEP 2: Fetch full content for each email
+      const emails = [];
+      for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i];
+        console.log(`  Fetching ${i + 1}/${messages.length}: ${msg.id}`);
+
+        const fullMsg = await pd.actions.run({
+          id: 'gmail-get-message',
+          externalUserId: externalUserId,
+          configuredProps: {
+            gmail: {
+              authProvisionId: accountId
+            },
+            id: msg.id,
+            format: 'full'
+          }
+        });
+
+        // Extract headers
+        const headers = fullMsg.payload?.headers || [];
+        const getHeader = (name: string) =>
+          headers.find((h: any) => h.name?.toLowerCase() === name.toLowerCase())?.value || '';
+
+        // Extract body (simple text extraction)
+        const extractBody = (payload: any): string => {
+          if (payload.body?.data) {
+            try {
+              return atob(payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+            } catch (e) {
+              return '';
+            }
+          }
+
+          if (payload.parts) {
+            for (const part of payload.parts) {
+              if (part.mimeType === 'text/plain' && part.body?.data) {
+                try {
+                  return atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+                } catch (e) {
+                  continue;
+                }
+              }
+            }
+          }
+
+          return '';
+        };
+
+        emails.push({
+          id: msg.id,
+          subject: getHeader('Subject'),
+          from_: getHeader('From'),
+          to: getHeader('To'),
+          date: getHeader('Date'),
+          body: extractBody(fullMsg.payload).substring(0, 2000) // Limit body size
+        });
+      }
+
+      console.log(`✅ Fetched ${emails.length} full emails`);
+      setSyncStatus(`Processing ${emails.length} emails through Graphiti...`);
+
+      // STEP 3: Send to backend for Graphiti processing
+      const response = await fetch(`${BACKEND_URL}/api/process-emails`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: externalUserId,
+          emails: emails
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Backend error: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      console.log('✅ Backend processing complete:', data);
+
+      setSyncStatus(`✅ Successfully processed ${data.emails_processed} emails!`);
       setMessages([{
         role: 'assistant',
-        content: `✅ Fetched and processed ${data.count} emails successfully! You can now ask questions about them.`
+        content: `✅ Fetched and processed ${data.emails_processed} emails successfully! Entities have been extracted and stored in FalkorDB. You can now ask questions about them.`
       }]);
-    } catch {
+
+    } catch (error) {
+      console.error('❌ Error fetching emails:', error);
+      setSyncStatus('❌ Failed to fetch emails');
       setMessages([{
         role: 'assistant',
-        content: '❌ Failed to fetch emails. Please try again.'
+        content: `❌ Failed to fetch emails: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`
       }]);
     } finally {
       setFetchingEmails(false);

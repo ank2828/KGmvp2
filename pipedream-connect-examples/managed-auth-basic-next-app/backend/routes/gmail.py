@@ -15,6 +15,8 @@ from graphiti_core.nodes import EpisodeType
 from services.graphiti_service import GraphitiService
 from services.pipedream import pipedream_service
 from services.database import db_service
+from services.entity_normalizer import EntityNormalizer
+from services.entity_types import ENTITY_TYPES, EXCLUDED_ENTITY_TYPES
 from models.email import EmailMessage, EmailProcessingResponse
 from dependencies import get_graphiti_service
 from config import settings
@@ -149,10 +151,65 @@ async def sync_gmail_30_days_batched(
         for batch_idx in range(0, len(day_emails), MAX_EMAILS_PER_EPISODE):
             batch = day_emails[batch_idx:batch_idx + MAX_EMAILS_PER_EPISODE]
 
-            # Combine emails with per-field sanitization
+            # PHASE 1: Store individual emails in Supabase FIRST
+            # This enables document retrieval and citation
+            from services.document_store import document_store
+
+            document_ids_map = {}  # email_id -> document_id mapping
+            emails_for_storage = []
+
+            for email_data in batch:
+                # Extract headers
+                headers_list = email_data.get('payload', {}).get('headers', [])
+                subject = None
+                sender = None
+                date_str = None
+
+                for header in headers_list:
+                    name = header.get('name', '').lower()
+                    value = header.get('value', '')
+
+                    if name == 'subject':
+                        subject = value
+                    elif name == 'from':
+                        sender = value
+                    elif name == 'date':
+                        date_str = value
+
+                # Extract body
+                body = pipedream_service._extract_plain_text_body(email_data)
+
+                # Prepare for Supabase storage
+                emails_for_storage.append({
+                    'id': email_data['id'],
+                    'subject': subject or 'No Subject',
+                    'body': body or '',
+                    'from': sender or 'Unknown',
+                    'to': '',  # Could extract if needed
+                    'date': date_str,
+                    'thread_id': email_data.get('threadId', '')
+                })
+
+            # Store emails in batch (with embeddings)
+            try:
+                stored_doc_ids = await document_store.store_emails_batch(
+                    user_id=sanitized_user_id,
+                    emails=emails_for_storage
+                )
+
+                # Create mapping: email_id -> document_id
+                for email, doc_id in zip(emails_for_storage, stored_doc_ids):
+                    document_ids_map[email['id']] = doc_id
+
+                logger.info(f"  Stored {len(stored_doc_ids)} emails in Supabase")
+            except Exception as e:
+                logger.error(f"Failed to store emails in Supabase: {e}")
+                # Continue anyway - Graphiti processing still works
+
+            # PHASE 2: Combine emails for Graphiti episode (existing logic)
             combined_parts = []
             for email_data in batch:
-                # Extract headers using existing pattern
+                # Extract headers again (could optimize by reusing from above)
                 headers_list = email_data.get('payload', {}).get('headers', [])
                 subject = None
                 sender = None
@@ -177,7 +234,7 @@ async def sync_gmail_30_days_batched(
 Subject: {sanitize_for_falkordb(subject or 'No Subject')}
 Date: {date_str or 'Unknown'}
 
-{sanitize_for_falkordb(body[:5000] if body else '')}"""
+{sanitize_for_falkordb(body[:1000] if body else '')}"""
 
                 combined_parts.append(email_text)
 
@@ -190,16 +247,51 @@ Date: {date_str or 'Unknown'}
                 tz=timezone.utc
             )
 
-            # Create Graphiti episode with error handling
+            # PHASE 3: Create Graphiti episode (existing logic)
             try:
-                await graphiti.graphiti.add_episode(
+                result = await graphiti.graphiti.add_episode(
                     name=f"Gmail {date.isoformat()} (batch {batch_idx//MAX_EMAILS_PER_EPISODE + 1})",
                     episode_body=combined_body,
                     source_description=f"{len(batch)} emails from {date}",
                     reference_time=reference_time,
                     source=EpisodeType.text,
+                    group_id=sanitized_user_id,
+                    entity_types=ENTITY_TYPES,
+                    excluded_entity_types=EXCLUDED_ENTITY_TYPES
+                )
+
+                # Normalize entities immediately after extraction
+                normalizer = EntityNormalizer(driver=graphiti.driver, source='gmail')
+                normalized_counts = await normalizer.normalize_and_persist(
+                    graphiti_result=result,
                     group_id=sanitized_user_id
                 )
+                logger.info(f"  Normalized: {normalized_counts}")
+
+                # PHASE 4: Link documents to extracted entities
+                # This enables: "Show me the email where Sarah was mentioned"
+                for entity_node in result.nodes:
+                    entity_uuid = entity_node.uuid
+                    entity_type = entity_node.labels[0] if entity_node.labels else 'Entity'
+                    entity_name = entity_node.name
+
+                    # Link ALL documents in this batch to the entity
+                    # TODO: Future optimization - check if entity actually mentioned in each email
+                    for email_id, doc_id in document_ids_map.items():
+                        try:
+                            await document_store.link_document_to_entity(
+                                document_id=doc_id,
+                                entity_uuid=entity_uuid,
+                                entity_type=entity_type,
+                                entity_name=entity_name,
+                                mention_count=1,  # TODO: Count actual mentions
+                                relevance_score=0.8  # TODO: Use Graphiti confidence score
+                            )
+                        except Exception as link_error:
+                            # Don't fail entire batch if linking fails
+                            logger.debug(f"Failed to link document to entity: {link_error}")
+
+                logger.info(f"  Linked {len(document_ids_map)} documents to {len(result.nodes)} entities")
 
                 total_processed += len(batch)
                 logger.info(f"Processed: {total_processed}/{len(all_message_ids)} emails")
@@ -253,9 +345,15 @@ def sanitize_for_falkordb(text: str) -> str:
     text = re.sub(r'https?://\S+', '[URL]', text)
     text = re.sub(r'www\.\S+', '[URL]', text)
 
-    # Step 4: Sanitize special chars
+    # Step 4: Sanitize RediSearch special chars
     text = text.replace('@', ' at ')
-    text = text.replace('*', '')
+    text = text.replace('$', ' dollars ')  # Currency symbols
+    text = text.replace(',', '')            # Number formatting (250,000 → 250000)
+
+    # Remove RediSearch operators that break fulltext search
+    for char in ['*', '(', ')', '{', '}', '[', ']', '^', '~', '|', ':', ';']:
+        text = text.replace(char, ' ')
+
     # Note: & is safe after decoding, only &amp; entity was problematic
 
     # Step 5: Clean up whitespace from removed tags
@@ -288,7 +386,7 @@ async def fetch_gmail(
         # Sanitize user_id for Graphiti processing (remove hyphens to avoid RediSearch syntax errors)
         sanitized_user_id = external_user_id.replace('-', '')
 
-        # Fetch from Pipedream (returns list directly)
+        # Fetch from Pipedream using Proxy API (direct Gmail access)
         raw_emails = pipedream_service.fetch_gmail_messages(
             external_user_id=external_user_id,
             account_id=account_id,
@@ -335,7 +433,28 @@ async def fetch_gmail(
             except Exception as e:
                 logger.warning(f"Parse error: {e}")
 
-        # Process through Graphiti
+        # Store emails in Supabase with embeddings (Phase 1)
+        from services.document_store import document_store
+
+        logger.info(f"Storing {len(emails)} emails in Supabase with embeddings...")
+        email_dicts = []
+        for email in emails:
+            email_dicts.append({
+                'id': email.message_id,
+                'subject': email.subject,
+                'body': email.body,
+                'from': email.sender,
+                'date': email.date,
+                'thread_id': email.message_id  # Use message_id as thread_id for now
+            })
+
+        try:
+            document_ids = await document_store.store_emails_batch(user_id, email_dicts)
+            logger.info(f"✅ Stored {len(document_ids)} emails in Supabase")
+        except Exception as e:
+            logger.error(f"❌ Failed to store emails in Supabase: {e}")
+
+        # Process through Graphiti (FalkorDB - Phase 0)
         results = []
         for i, email in enumerate(emails, 1):
             try:
@@ -567,9 +686,9 @@ async def start_30_day_sync(
             job_id=job_id
         )
 
-        # Update job with task_id
+        # Update job with celery_task_id
         db_service.client.table('sync_jobs').update({
-            'task_id': task.id
+            'celery_task_id': task.id
         }).eq('id', job_id).execute()
 
         logger.info(f"Queued Celery task {task.id} for job {job_id}")
@@ -577,7 +696,7 @@ async def start_30_day_sync(
         return {
             "status": "queued",
             "job_id": job_id,
-            "task_id": task.id,
+            "celery_task_id": task.id,
             "message": f"Sync queued for {days} days. Check /api/sync/status/{job_id} for progress."
         }
 
