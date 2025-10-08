@@ -12,20 +12,24 @@ from pydantic import BaseModel, Field
 
 class Company(BaseModel):
     """
-    A business organization or corporation.
+    A business organization or corporation with a legitimate business name.
 
-    INCLUDE:
-    - Full company names (e.g., "Acme Corporation", "Google LLC")
-    - Organizations with employees or business operations
+    CRITICAL RULES - INCLUDE ONLY:
+    - Real company names with proper nouns (e.g., "Acme Corporation", "Google LLC", "Microsoft")
+    - Organizations with employees and business operations
+    - Must be a recognizable business entity, NOT a URL, link text, or placeholder
 
-    EXCLUDE:
-    - Domain names alone (extract as domain attribute)
+    CRITICAL RULES - ALWAYS EXCLUDE:
+    - Text containing "URL" (these are link placeholders, not companies)
+    - Domain names alone (acme.com) - extract as domain attribute instead
     - Email addresses
-    - URLs or LinkedIn profiles
+    - Website URLs or LinkedIn profiles
+    - Link text or navigation elements
     - Industry categories
     - Physical locations
+    - Generic terms like "View Group", "Click here", etc.
 
-    Extract domain, industry, location as ATTRIBUTES, not separate entities.
+    Extract domain, industry, location as ATTRIBUTES of the Company, not separate entities.
     """
     domain: str | None = Field(None, description="Company's primary domain (e.g., acme.com)")
     industry: str | None = Field(None, description="Industry or sector")
@@ -34,20 +38,23 @@ class Company(BaseModel):
 
 class Contact(BaseModel):
     """
-    A person, typically with a professional role.
+    A real person with a full name, typically in a professional context.
 
-    INCLUDE:
-    - Full names of people (e.g., "Sarah Johnson", "John Smith")
-    - Individuals with job titles or roles
+    CRITICAL RULES - INCLUDE ONLY:
+    - Full names of real people (e.g., "Sarah Johnson", "John Smith", "Alex Chen")
+    - Must be an actual person, not a sender name or email display name
+    - Individuals with identifiable professional roles
 
-    EXCLUDE:
+    CRITICAL RULES - ALWAYS EXCLUDE:
+    - Email display names (e.g., "AI Automation Society (Skool)" is a sender, not a person)
     - Email addresses alone (extract as email attribute)
     - Phone numbers alone (extract as phone attribute)
     - LinkedIn URLs or social profiles
-    - Job titles without names (e.g., just "CFO")
+    - Job titles without names (e.g., just "CFO" or "VP of Sales")
     - Generic role descriptions
+    - Sender names from emails (extract from sender field, not content)
 
-    Extract email, phone, title as ATTRIBUTES, not separate entities.
+    Extract email, phone, title as ATTRIBUTES of the Contact, not separate entities.
     """
     email: str | None = Field(None, description="Contact's email address")
     phone: str | None = Field(None, description="Contact's phone number")

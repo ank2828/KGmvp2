@@ -13,6 +13,7 @@ from graphiti_core.nodes import EpisodeType
 from config import settings
 from models.email import EmailMessage, GraphProcessingResult
 from services.database import db_service
+from services.entity_types import ENTITY_TYPES, EXCLUDED_ENTITY_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,8 @@ class GraphitiService:
                 source_description="Gmail message",
                 reference_time=datetime.now(timezone.utc),
                 group_id=user_id,
+                entity_types=ENTITY_TYPES,
+                excluded_entity_types=EXCLUDED_ENTITY_TYPES,
             )
 
             # Mark as processed in deduplication table
